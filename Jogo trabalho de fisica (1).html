@@ -1,0 +1,426 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Corrida Reta -- Mini Jogo</title>
+<style>
+  :root{--bg:#0b1220;--panel:#0f1727;--accent:#4fd1c5;--text:#e6eef6}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial;background:linear-gradient(180deg,#071021,#09202a);color:var(--text)}
+  .wrap{max-width:900px;margin:18px auto;padding:12px;}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+  .logo{width:48px;height:48px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#042;font-weight:800}
+  h1{margin:0;font-size:18px}
+  .game-area{display:flex;gap:12px;flex-wrap:wrap}
+  canvas{background:linear-gradient(#2b2b2b,#1f1f1f);border-radius:10px;display:block;max-width:100%}
+  .panel{background:rgba(255,255,255,0.03);padding:12px;border-radius:10px;min-width:220px;color:var(--text)}
+  .controls{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+  .btn{background:var(--accent);color:#042;border:none;padding:10px;border-radius:8px;font-weight:800;cursor:pointer}
+  .touchRow{display:flex;gap:8px;justify-content:center}
+  .touchBtn{flex:1;padding:12px;border-radius:8px;background:rgba(255,255,255,0.04);color:var(--text);font-weight:800;border:1px solid rgba(255,255,255,0.03);touch-action:manipulation}
+  .meta{font-size:13px;color:#a8b3bd;margin-top:6px}
+  footer{margin-top:10px;color:#99a3ad;font-size:13px}
+  @media(max-width:760px){ .panel{order:2;width:100%} canvas{order:1} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">CR</div>
+    <div>
+      <h1>Corrida Reta</h1>
+      <div class="meta">Dirija o máximo que conseguir -- evite obstáculos. Teclado + botões touch</div>
+    </div>
+  </header>
+
+  <div class="game-area">
+    <canvas id="game" width="720" height="480" aria-label="Canvas do jogo Corrida Reta"></canvas>
+
+    <div class="panel" aria-hidden="false">
+      <div><strong>Controles</strong></div>
+      <div class="meta">Teclado: ↑ acelerar, ↓ frear, ←/→ virar. Touch: use os botões abaixo.</div>
+
+      <div style="margin-top:10px">
+        <div><strong>Pontos</strong></div>
+        <div id="score" style="font-size:20px;font-weight:800">0 m</div>
+      </div>
+
+      <div style="margin-top:10px">
+        <div><strong>Velocidade</strong></div>
+        <div id="speed" style="font-weight:700">0</div>
+      </div>
+
+      <div class="controls">
+        <button id="startBtn" class="btn">Iniciar / Reiniciar</button>
+        <button id="pauseBtn" class="btn" style="background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--text)">Pausar</button>
+      </div>
+
+      <div style="margin-top:12px">
+        <div><strong>Touch Controls</strong></div>
+        <div class="touchRow" style="margin-top:8px">
+          <button id="leftTouch" class="touchBtn">◀</button>
+          <button id="accTouch" class="touchBtn">▲ Acelerar</button>
+          <button id="rightTouch" class="touchBtn">▶</button>
+        </div>
+        <div class="touchRow" style="margin-top:8px">
+          <button id="brakeTouch" class="touchBtn">▼ Frear</button>
+        </div>
+      </div>
+
+      <div style="margin-top:10px">
+        <div><strong>Status</strong></div>
+        <div id="status" class="meta">Aguardando início</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Jogo simples feito pra diversão -- quer que eu adicione curvas, nitro ou mais obstáculos?
+  </footer>
+</div>
+
+<script>
+(() => {
+  // Canvas + context
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  // UI
+  const scoreEl = document.getElementById('score');
+  const speedEl = document.getElementById('speed');
+  const statusEl = document.getElementById('status');
+  const startBtn = document.getElementById('startBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+
+  // touch buttons
+  const leftTouch = document.getElementById('leftTouch');
+  const rightTouch = document.getElementById('rightTouch');
+  const accTouch = document.getElementById('accTouch');
+  const brakeTouch = document.getElementById('brakeTouch');
+
+  // game variables
+  let running = false;
+  let paused = false;
+  let lastTime = 0;
+  let distance = 0; // meters
+  let spawnTimer = 0;
+
+  // road dimensions
+  const ROAD_WIDTH = canvas.width * 0.6;
+  const ROAD_X = (canvas.width - ROAD_WIDTH) / 2;
+
+  // car state
+  const car = {
+    x: canvas.width / 2,
+    y: canvas.height - 90,
+    width: 36,
+    height: 60,
+    angle: 0, // degrees, -maxLeft .. +maxRight
+    speed: 0, // px/s
+    maxSpeed: 500, // px/s (top)
+    accel: 700, // px/s^2
+    brakeDecel: 900,
+    friction: 400,
+    steerSpeed: 160, // degrees/s
+    maxSteer: 40 // degrees max
+  };
+
+  // obstacles list (cones or boxes)
+  let obstacles = [];
+
+  // inputs
+  const input = { left:false, right:false, accel:false, brake:false };
+
+  // helpers
+  function resetGame(){
+    running = true;
+    paused = false;
+    lastTime = 0;
+    distance = 0;
+    spawnTimer = 0;
+    car.x = canvas.width/2;
+    car.y = canvas.height - 90;
+    car.angle = 0;
+    car.speed = 0;
+    obstacles = [];
+    statusEl.textContent = 'Jogando';
+    updateUI();
+    requestAnimationFrame(loop);
+  }
+
+  function endGame(reason){
+    running = false;
+    statusEl.textContent = 'Bateu! ' + reason + ' -- Reinicie para jogar de novo.';
+    updateUI();
+    // draw final overlay
+    draw();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = '22px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Game Over', canvas.width/2, canvas.height/2 - 8);
+    ctx.font = '16px Inter, sans-serif';
+    ctx.fillText('Distância: ' + Math.floor(distance) + ' m', canvas.width/2, canvas.height/2 + 18);
+  }
+
+  function updateUI(){
+    scoreEl.textContent = Math.floor(distance) + ' m';
+    speedEl.textContent = Math.round(car.speed) + ' px/s';
+  }
+
+  // spawn obstacles in road area (x between ROAD_X+20..ROAD_X+ROAD_WIDTH-20)
+  function spawnObstacle(){
+    const w = 22 + Math.random()*24;
+    const h = 22 + Math.random()*24;
+    const x = ROAD_X + 18 + Math.random()*(ROAD_WIDTH - 36 - w);
+    const y = -h - 10;
+    const type = Math.random() < 0.6 ? 'cone' : 'box';
+    obstacles.push({x,y,w,h,type});
+  }
+
+  // collision check (AABB)
+  function collides(a,b){
+    return !(a.x + a.width < b.x || a.x > b.x + b.w || a.y + a.height < b.y || a.y > b.y + b.h);
+  }
+
+  // game loop
+  function loop(timestamp){
+    if(!running || paused) return;
+    if(!lastTime) lastTime = timestamp;
+    const dt = (timestamp - lastTime) / 1000; // seconds
+    lastTime = timestamp;
+
+    // input -> physics
+    // acceleration
+    if(input.accel){
+      car.speed += car.accel * dt;
+    } else if(input.brake){
+      car.speed -= car.brakeDecel * dt;
+    } else {
+      // friction
+      if(car.speed > 0) car.speed -= car.friction * dt;
+      else if(car.speed < 0) car.speed += car.friction * dt;
+    }
+
+    // clamp speed
+    if(car.speed > car.maxSpeed) car.speed = car.maxSpeed;
+    if(car.speed < -100) car.speed = -100; // slight reverse allowed
+
+    // steering depends on speed (more speed -> less turning)
+    const steerFactor = Math.max(0.15, 1 - Math.abs(car.speed) / car.maxSpeed);
+    if(input.left){
+      car.angle -= car.steerSpeed * dt * steerFactor;
+    }
+    if(input.right){
+      car.angle += car.steerSpeed * dt * steerFactor;
+    }
+    // clamp angle
+    if(car.angle > car.maxSteer) car.angle = car.maxSteer;
+    if(car.angle < -car.maxSteer) car.angle = -car.maxSteer;
+
+    // lateral movement from steering
+    const lateral = Math.tan((car.angle * Math.PI)/180) * (car.speed * dt * 0.5);
+    car.x += lateral;
+    // forward movement changes 'distance' and moves obstacles visually down
+    const forward = car.speed * dt;
+    distance += Math.max(0, forward) * 0.06; // translate px to meters-ish (scale)
+
+    // move obstacles down (simulate car moving forward)
+    obstacles.forEach(o => { o.y += forward; });
+
+    // remove passed obstacles
+    obstacles = obstacles.filter(o => o.y < canvas.height + 120);
+
+    // spawn obstacles based on time and speed
+    spawnTimer += dt * (1 + Math.abs(car.speed)/200);
+    if(spawnTimer > 0.9){
+      spawnTimer = 0;
+      if(Math.random() < 0.85) spawnObstacle();
+    }
+
+    // boundary constraints: road edges
+    const leftLimit = ROAD_X + 6;
+    const rightLimit = ROAD_X + ROAD_WIDTH - car.width - 6;
+    if(car.x < leftLimit) { car.x = leftLimit; car.speed *= 0.6; }
+    if(car.x > rightLimit) { car.x = rightLimit; car.speed *= 0.6; }
+
+    // check collisions between car and obstacles (approx rects)
+    const carBox = { x: car.x, y: car.y, width: car.width, height: car.height };
+    for(let o of obstacles){
+      const obsBox = {x:o.x, y:o.y, w:o.w, h:o.h};
+      if(collides(carBox, obsBox)){
+        endGame('colisão com obstáculo');
+        return;
+      }
+    }
+
+    updateUI();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // drawing functions
+  function drawRoad(){
+    // sky / grass
+    ctx.fillStyle = '#1c242c';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // sides (grass)
+    ctx.fillStyle = '#0b612c';
+    ctx.fillRect(0,0,ROAD_X,canvas.height);
+    ctx.fillRect(ROAD_X + ROAD_WIDTH,0,canvas.width - (ROAD_X + ROAD_WIDTH),canvas.height);
+
+    // road
+    ctx.fillStyle = '#3b3b3b';
+    ctx.fillRect(ROAD_X,0,ROAD_WIDTH,canvas.height);
+
+    // road edges
+    ctx.fillStyle = '#bfbfbf';
+    ctx.fillRect(ROAD_X+4,0,6,canvas.height);
+    ctx.fillRect(ROAD_X + ROAD_WIDTH - 10,0,6,canvas.height);
+
+    // center dashed line
+    ctx.strokeStyle = '#f2d66a';
+    ctx.lineWidth = 6;
+    ctx.setLineDash([30,20]);
+    ctx.beginPath();
+    ctx.moveTo(ROAD_X + ROAD_WIDTH/2, 0);
+    ctx.lineTo(ROAD_X + ROAD_WIDTH/2, canvas.height);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawCar(){
+    ctx.save();
+    // car body
+    ctx.translate(car.x + car.width/2, car.y + car.height/2);
+    ctx.rotate((car.angle * Math.PI)/180 * 0.35); // slight visual tilt depending on angle
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(-car.width/2, -car.height/2 + 6, car.width, car.height);
+    // body
+    ctx.fillStyle = '#e24b4b';
+    ctx.fillRect(-car.width/2, -car.height/2, car.width, car.height);
+    // windscreen
+    ctx.fillStyle = '#202a33';
+    ctx.fillRect(-car.width/4, -car.height/2 + 6, car.width/2, car.height/4);
+    ctx.restore();
+  }
+
+  function drawObstacles(){
+    for(let o of obstacles){
+      if(o.type === 'cone'){
+        // cone = triangle
+        ctx.fillStyle = '#ff7b2b';
+        ctx.beginPath();
+        ctx.moveTo(o.x + o.w/2, o.y);
+        ctx.lineTo(o.x + o.w, o.y + o.h);
+        ctx.lineTo(o.x, o.y + o.h);
+        ctx.closePath();
+        ctx.fill();
+        // base
+        ctx.fillStyle = '#6b4b2b';
+        ctx.fillRect(o.x, o.y + o.h - 6, o.w, 6);
+      } else {
+        // box
+        ctx.fillStyle = '#6f6f6f';
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.strokeStyle = '#333';
+        ctx.strokeRect(o.x, o.y, o.w, o.h);
+      }
+    }
+  }
+
+  function drawHUD(){
+    // small distance indicator top-left
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(8,8,140,36);
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px Inter, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('Dist: ' + Math.floor(distance) + ' m', 16, 30);
+  }
+
+  function draw(){
+    // clear
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    // draw scene
+    drawRoad();
+    drawObstacles();
+    drawCar();
+    drawHUD();
+  }
+
+  // input handlers (keyboard)
+  window.addEventListener('keydown', e => {
+    if(!running) return;
+    if(e.key === 'ArrowLeft') input.left = true;
+    if(e.key === 'ArrowRight') input.right = true;
+    if(e.key === 'ArrowUp') input.accel = true;
+    if(e.key === 'ArrowDown') input.brake = true;
+  });
+  window.addEventListener('keyup', e => {
+    if(e.key === 'ArrowLeft') input.left = false;
+    if(e.key === 'ArrowRight') input.right = false;
+    if(e.key === 'ArrowUp') input.accel = false;
+    if(e.key === 'ArrowDown') input.brake = false;
+  });
+
+  // touch / mouse button helpers
+  function bindTouch(el, key){
+    const set = v => {
+      if(key === 'left') input.left = v;
+      if(key === 'right') input.right = v;
+      if(key === 'acc') input.accel = v;
+      if(key === 'brake') input.brake = v;
+    };
+    el.addEventListener('touchstart', e => { e.preventDefault(); set(true); });
+    el.addEventListener('touchend', e => { e.preventDefault(); set(false); });
+    el.addEventListener('mousedown', e => { e.preventDefault(); set(true); });
+    window.addEventListener('mouseup', e => { set(false); });
+    // also handle leaving touch area
+    el.addEventListener('touchcancel', e => { set(false); });
+  }
+  bindTouch(leftTouch, 'left');
+  bindTouch(rightTouch, 'right');
+  bindTouch(accTouch, 'acc');
+  bindTouch(brakeTouch, 'brake');
+
+  // start/pause buttons
+  startBtn.onclick = () => { resetGame(); };
+  pauseBtn.onclick = () => {
+    if(!running) return;
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Retomar' : 'Pausar';
+    statusEl.textContent = paused ? 'Pausado' : 'Jogando';
+    if(!paused) { lastTime = 0; requestAnimationFrame(loop); }
+  };
+
+  // initially draw an attract screen
+  function drawAttract(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    drawRoad();
+    ctx.fillStyle = '#fff';
+    ctx.font = '22px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Corrida Reta', canvas.width/2, canvas.height/2 - 6);
+    ctx.font = '14px Inter, sans-serif';
+    ctx.fillText('Clique em "Iniciar / Reiniciar" para jogar', canvas.width/2, canvas.height/2 + 18);
+  }
+
+  drawAttract();
+  // make canvas responsive-ish
+  function fitCanvas(){
+    const ratio = canvas.width / canvas.height;
+    const w = Math.min(window.innerWidth - 40, 900);
+    const h = Math.round(w / ratio);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+  }
+  window.addEventListener('resize', fitCanvas);
+  fitCanvas();
+})();
+</script>
+</body>
+</html>

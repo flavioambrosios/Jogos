@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Vaca Jump — jogo HTML</title>
+  <style>
+    html,body{height:100%;margin:0;background:linear-gradient(#79c2ff,#bfe7ff);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    #gameWrap{display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px}
+    canvas{background:linear-gradient(#7ed957,#3fa34a);border:6px solid #2b7a2b;border-radius:8px;max-width:100%;height:auto}
+    .hud{display:flex;gap:12px;align-items:center;color:#032;font-weight:700;text-shadow:0 1px 0 #fff6;padding:0 8px}
+    .buttons{position:fixed;left:0;right:0;bottom:10px;display:flex;justify-content:center;gap:12px;pointer-events:none}
+    .btn{pointer-events:auto;user-select:none;background:rgba(255,255,255,0.95);border-radius:10px;padding:12px 16px;box-shadow:0 4px 0 rgba(0,0,0,0.15);font-weight:700}
+    .btn:active{transform:translateY(2px);box-shadow:0 2px 0 rgba(0,0,0,0.12)}
+    .btn.small{padding:10px 12px;border-radius:8px}
+    .leftControls{display:flex;gap:8px}
+    .menuScreen{position:absolute;inset:0;background:rgba(0,0,0,0.6);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:32px;z-index:10;text-align:center}
+    .menuScreen button{font-size:22px;margin-top:18px;padding:10px 18px;border:none;border-radius:8px;background:#fff;color:#333;font-weight:bold;cursor:pointer}
+    @media(min-width:720px){.buttons{bottom:22px}}
+    .developerNote{font-size:12px;color:#024;margin-top:6px}
+  </style>
+</head>
+<body>
+  <div id="gameWrap">
+    <div class="hud">
+      <div id="score">Pontos: 0</div>
+      <div id="lives">Vidas: 3</div>
+      <div id="enemiesAlive">Boi(s): 0</div>
+    </div>
+    <canvas id="game" width="960" height="540"></canvas>
+    <div class="developerNote">Use setas / A D para mover, Espaço para pular, K para atirar. Botões na tela para tocar no celular.</div>
+  </div>
+
+  <div class="buttons">
+    <div class="leftControls">
+      <div class="btn small" id="leftBtn">◀</div>
+      <div class="btn small" id="rightBtn">▶</div>
+      <div class="btn small" id="jumpBtn">▲ Pular</div>
+    </div>
+    <div class="btn" id="shootBtn">Atirar</div>
+  </div>
+
+  <div class="menuScreen" id="menu">
+    <div>🐄 <b>Vaca Jump</b> 🐂</div>
+    <div style="font-size:20px;margin-top:6px">Derrote os bois com jatos de leite!</div>
+    <button id="startBtn">Iniciar Jogo</button>
+  </div>
+
+  <script>
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+  const enemiesAliveEl = document.getElementById('enemiesAlive');
+  const menu = document.getElementById('menu');
+  const startBtn = document.getElementById('startBtn');
+
+  const W = canvas.width, H = canvas.height;
+  let score=0,lives=3,gameOver=false,gameStarted=false;
+  const gravity=0.9;
+
+  const player={x:120,y:H-120,w:70,h:50,vx:0,vy:0,speed:4.4,jumpForce:-16,onGround:false,facing:1,shootCooldown:0};
+  const platforms=[{x:0,y:H-60,w:W,h:60},{x:350,y:H-180,w:220,h:18},{x:650,y:H-300,w:180,h:18},{x:140,y:H-320,w:160,h:18}];
+  const bullets=[],enemies=[];
+
+  let lastTime=0,enemySpawnTimer=0;
+  const keys={};
+  const leftBtn=document.getElementById('leftBtn');
+  const rightBtn=document.getElementById('rightBtn');
+  const jumpBtn=document.getElementById('jumpBtn');
+  const shootBtn=document.getElementById('shootBtn');
+
+  window.addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
+  window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+  function bindButton(el,onDown,onUp){el.addEventListener('pointerdown',e=>{e.preventDefault();onDown();});el.addEventListener('pointerup',e=>{e.preventDefault();onUp();});}
+  let leftActive=false,rightActive=false,jumpActive=false,shootActive=false;
+  bindButton(leftBtn,()=>leftActive=true,()=>leftActive=false);
+  bindButton(rightBtn,()=>rightActive=true,()=>rightActive=false);
+  bindButton(jumpBtn,()=>{jumpActive=true;setTimeout(()=>jumpActive=false,150);},()=>jumpActive=false);
+  bindButton(shootBtn,()=>{shootActive=true;setTimeout(()=>shootActive=false,150);},()=>shootActive=false);
+
+  function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+  function spawnEnemy(){const lane=Math.random();let y,speed;if(lane<0.35){y=H-104;speed=-1.6;}else if(lane<0.7){y=H-224;speed=-1.9;}else{y=H-344;speed=-2.2;}enemies.push({x:W+60,y:y,w:64,h:44,vx:speed,hp:1});}
+  function shoot(){if(player.shootCooldown>0)return;player.shootCooldown=16;const dir=player.facing;const bx=player.x+player.w/2+dir*28;const by=player.y+14;bullets.push({x:bx,y:by,r:10,vx:9*dir,vy:-3,life:100});playSound('shoot');}
+  function loseLife(){lives--;player.x=120;player.y=H-200;player.vx=0;player.vy=0;playSound('hurt');}
+  function knockbackFromEnemy(e){const dir=(player.x<e.x)?-1:1;player.vx=-dir*6;player.vy=-6;lives--;playSound('hurt');enemies.splice(enemies.indexOf(e),1);}
+
+  const sounds={};
+  function loadSound(name,src){const a=new Audio(src);a.volume=0.3;sounds[name]=a;}
+  function playSound(name){if(sounds[name]){const s=sounds[name].cloneNode();s.volume=sounds[name].volume;s.play();}}
+  loadSound('shoot','https://actions.google.com/sounds/v1/foley/bubble_pop.ogg');
+  loadSound('hurt','https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg');
+  loadSound('enemy','https://actions.google.com/sounds/v1/animals/cow_moo.ogg');
+  loadSound('jump','https://actions.google.com/sounds/v1/human_voices/hmm_male.ogg');
+
+  function update(dt){if(!gameStarted||gameOver)return;const left=keys['arrowleft']||keys['a']||leftActive;const right=keys['arrowright']||keys['d']||rightActive;const jump=keys[' ']||keys['space']||keys['w']||keys['arrowup']||jumpActive;const shootKey=keys['k']||shootActive;if(left){player.vx=-player.speed;player.facing=-1;}else if(right){player.vx=player.speed;player.facing=1;}else{player.vx*=0.8;if(Math.abs(player.vx)<0.1)player.vx=0;}
+    player.onGround=false;player.vy+=gravity;player.x+=player.vx;player.y+=player.vy;
+    for(const p of platforms){if(player.x+player.w>p.x&&player.x<p.x+p.w){if(player.y+player.h>p.y&&player.y+player.h<p.y+p.h+50&&player.vy>=0){player.y=p.y-player.h;player.vy=0;player.onGround=true;}}}
+    if(jump&&player.onGround){player.vy=player.jumpForce;player.onGround=false;playSound('jump');}
+    if(player.x<0)player.x=0;if(player.x+player.w>W)player.x=W-player.w;if(player.y>H)loseLife();
+    for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];b.x+=b.vx;b.y+=b.vy;b.vy+=0.15;b.life--;if(b.x<-50||b.x>W+50||b.y>H+50||b.life<=0)bullets.splice(i,1);}
+    for(let i=enemies.length-1;i>=0;i--){const e=enemies[i];e.x+=e.vx;for(let j=bullets.length-1;j>=0;j--){const b=bullets[j];const bb={x:b.x-b.r,y:b.y-b.r,w:2*b.r,h:2*b.r};if(rectsOverlap(bb,e)){bullets.splice(j,1);score+=10;playSound('enemy');enemies.splice(i,1);break;}}
+      if(rectsOverlap(player,e))knockbackFromEnemy(e);if(e.x<-120)enemies.splice(i,1);}
+    enemySpawnTimer+=dt;if(enemySpawnTimer>1400){spawnEnemy();enemySpawnTimer=0;}
+    if(shootKey)shoot();if(player.shootCooldown>0)player.shootCooldown--;scoreEl.textContent='Pontos: '+score;livesEl.textContent='Vidas: '+lives;enemiesAliveEl.textContent='Boi(s): '+enemies.length;if(lives<=0)gameOver=true;}
+
+  function drawCow(x,y,w,h,face){ctx.save();if(face===-1){ctx.translate(x+w,y);ctx.scale(-1,1);x=0;y=0;}ctx.fillStyle='#fff';roundRect(ctx,x,y,w,h,8,true,false);ctx.fillStyle='#222';ctx.beginPath();ctx.ellipse(x+18,y+16,12,8,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x+44,y+32,14,10,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';roundRect(ctx,x+w-24,y-8,32,28,6,true,false);ctx.fillStyle='#111';ctx.beginPath();ctx.arc(x+w-14,y+2,3,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(x+w-22,y+2,3,0,Math.PI*2);ctx.fill();ctx.fillStyle='#f2d6b3';ctx.fillRect(x+w-6,y-10,4,8);ctx.fillRect(x+w-30,y-10,4,8);ctx.fillStyle='#f7c6d0';ctx.beginPath();ctx.ellipse(x+12,y+h-6,12,8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#6b4720';ctx.fillRect(x+6,y+h-4,10,14);ctx.fillRect(x+w-26,y+h-4,10,14);ctx.restore();}
+  function drawPlatform(p){ctx.fillStyle='#6b4720';roundRect(ctx,p.x,p.y,p.w,p.h,6,true,false);ctx.fillStyle='#4a2f14';ctx.fillRect(p.x+6,p.y+2,p.w-12,4);}
+  function drawEnemies(){for(const e of enemies){ctx.fillStyle='#8b0000';roundRect(ctx,e.x,e.y,e.w,e.h,6,true,false);ctx.fillStyle='#6b0000';ctx.fillRect(e.x-18,e.y-8,18,20);ctx.fillStyle='#fff';ctx.fillRect(e.x-20,e.y-12,6,6);ctx.fillRect(e.x+e.w-4,e.y-12,6,6);ctx.fillStyle='#111';ctx.fillRect(e.x-10,e.y,4,4);ctx.fillStyle='#3b1a0b';ctx.fillRect(e.x+8,e.y+e.h,8,10);ctx.fillRect(e.x+e.w-18,e.y+e.h,8,10);}}
+  function drawBullets(){for(const b of bullets){ctx.beginPath();ctx.fillStyle='#fff';ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='rgba(255,255,255,0.4)';ctx.fillRect(b.x-3,b.y+6,6,3);}}
+  function drawHUD(){if(gameOver){ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='48px sans-serif';ctx.fillText('Game Over',W/2,H/2-20);ctx.font='24px sans-serif';ctx.fillText('Pontos: '+score,W/2,H/2+20);}}
+  function roundRect(ctx,x,y,w,h,r,fill,stroke){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();if(fill)ctx.fill();if(stroke)ctx.stroke();}
+  function drawBackground(){ctx.fillStyle='#6fcf6f';ctx.fillRect(0,H-120,W,120);ctx.fillStyle='#5aa855';ctx.beginPath();ctx.ellipse(220,H-90,260,90,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(600,H-120,360,120,0,0,Math.PI*2);ctx.fill();}
+  function clear(){ctx.clearRect(0,0,W,H);}
+  function render(){clear();drawBackground();for(const p of platforms)drawPlatform(p);drawCow(player.x,player.y,player.w,player.h,player.facing);drawEnemies();drawBullets();drawHUD();}
+  function loop(ts){const dt=Math.min(40,ts-lastTime);update(dt);render();lastTime=ts;requestAnimationFrame(loop);}
+  lastTime=performance.now();requestAnimationFrame(loop);
+  function fitCanvas(){const margin=16;const availableW=Math.min(window.innerWidth-margin,1100);const scale=Math.min(1,availableW/W);canvas.style.width=Math.round(W*scale)+'px';canvas.style.height=Math.round(H*scale)+'px';}
+  window.addEventListener('resize',fitCanvas);fitCanvas();
+
+  startBtn.onclick=()=>{menu.style.display='none';gameStarted=true;score=0;lives=3;enemies.length=0;bullets.length=0;gameOver=false;for(let i=0;i<2;i++)spawnEnemy();};
+  canvas.addEventListener('pointerdown',()=>{if(gameOver){score=0;lives=3;enemies.length=0;bullets.length=0;gameOver=false;}});
+  </script>
+</body>
+</html>

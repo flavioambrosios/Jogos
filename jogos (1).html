@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cesta da Gravidade</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            touch-action: manipulation;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .container {
+            padding: 10px;
+            text-align: center;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        h1 {
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            margin: 5px 0;
+            font-size: 1.5em;
+        }
+        
+        .game-info {
+            background: rgba(255,255,255,0.9);
+            padding: 10px;
+            border-radius: 15px;
+            margin: 5px;
+            display: flex;
+            justify-content: space-around;
+            font-weight: bold;
+        }
+        
+        #gameCanvas {
+            border: 3px solid white;
+            border-radius: 10px;
+            background: white;
+            flex-grow: 1;
+            width: 100%;
+            margin: 5px 0;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin: 5px 0;
+        }
+        
+        button {
+            padding: 12px 20px;
+            font-size: 1.1em;
+            border: none;
+            border-radius: 25px;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        button:active {
+            transform: scale(0.95);
+        }
+        
+        .message {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            color: white;
+            padding: 30px;
+            border-radius: 20px;
+            text-align: center;
+            display: none;
+            z-index: 100;
+            border: 3px solid gold;
+        }
+        
+        .message h2 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #ddd;
+            border-radius: 10px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        
+        .progress {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            width: 0%;
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏀 CESTA DA GRAVIDADE</h1>
+        
+        <div class="game-info">
+            <div>🎯 Pontos: <span id="score">0</span>/20</div>
+            <div>⏱️ Tempo: <span id="time">30</span>s</div>
+            <div>💔 Vidas: <span id="lives">3</span></div>
+        </div>
+        
+        <div class="progress-bar">
+            <div class="progress" id="progress"></div>
+        </div>
+        
+        <canvas id="gameCanvas"></canvas>
+        
+        <div class="controls">
+            <button onclick="startGame()">🎮 Jogar</button>
+            <button onclick="resetGame()">🔄 Reiniciar</button>
+        </div>
+    </div>
+
+    <div class="message" id="message">
+        <h2 id="messageTitle">Fim de Jogo</h2>
+        <p id="messageText"></p>
+        <button onclick="resetGame()" style="margin-top: 15px;">🎯 Jogar Novamente</button>
+    </div>
+
+    <script>
+        // Configurações do jogo
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const timeDisplay = document.getElementById('time');
+        const livesDisplay = document.getElementById('lives');
+        const progressBar = document.getElementById('progress');
+        const message = document.getElementById('message');
+        const messageTitle = document.getElementById('messageTitle');
+        const messageText = document.getElementById('messageText');
+
+        // Estado do jogo
+        let gameState = {
+            score: 0,
+            time: 30,
+            lives: 3,
+            isPlaying: false,
+            gameLoop: null
+        };
+
+        // Elementos do jogo
+        let basket = {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 30
+        };
+
+        let fallingObjects = [];
+        let particles = [];
+
+        // Configurar canvas
+        function resizeCanvas() {
+            canvas.width = window.innerWidth - 40;
+            canvas.height = window.innerHeight * 0.6;
+            
+            // Posicionar cesta no centro inferior
+            basket.x = canvas.width / 2 - basket.width / 2;
+            basket.y = canvas.height - 50;
+        }
+        
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Objetos que caem
+        const objectTypes = [
+            { type: 'good', color: '#4CAF50', points: 1 },     // Frutas - ganha pontos
+            { type: 'good', color: '#2196F3', points: 2 },     // Presentes - mais pontos
+            { type: 'bad', color: '#F44336', points: -1 },     // Bombas - perde vida
+            { type: 'bonus', color: '#FFD700', points: 5 }     // Estrelas - muitos pontos
+        ];
+
+        function createFallingObject() {
+            const type = Math.random() < 0.6 ? 'good' : 
+                        Math.random() < 0.8 ? 'bad' : 'bonus';
+            
+            const objectType = objectTypes.find(obj => obj.type === type) || objectTypes[0];
+            
+            return {
+                x: Math.random() * (canvas.width - 30),
+                y: -30,
+                size: type === 'bonus' ? 25 : 20,
+                color: objectType.color,
+                type: type,
+                points: objectType.points,
+                speed: 2 + Math.random() * 3
+            };
+        }
+
+        function update() {
+            if (!gameState.isPlaying) return;
+
+            // Atualizar tempo
+            gameState.time -= 1/60;
+            timeDisplay.textContent = Math.max(0, Math.ceil(gameState.time));
+
+            // Adicionar novos objetos
+            if (Math.random() < 0.05) {
+                fallingObjects.push(createFallingObject());
+            }
+
+            // Atualizar objetos caindo
+            fallingObjects.forEach((obj, index) => {
+                obj.y += obj.speed;
+
+                // Verificar colisão com a cesta
+                if (obj.y + obj.size > basket.y && 
+                    obj.y < basket.y + basket.height &&
+                    obj.x + obj.size > basket.x && 
+                    obj.x < basket.x + basket.width) {
+                    
+                    // Efeitos de partículas
+                    createParticles(obj.x + obj.size/2, obj.y + obj.size/2, obj.color);
+                    
+                    // Atualizar pontuação/vidas
+                    if (obj.type === 'bad') {
+                        gameState.lives--;
+                        livesDisplay.textContent = gameState.lives;
+                    } else {
+                        gameState.score += obj.points;
+                        scoreDisplay.textContent = gameState.score;
+                    }
+                    
+                    // Remover objeto
+                    fallingObjects.splice(index, 1);
+                    
+                    // Atualizar barra de progresso
+                    updateProgressBar();
+                }
+
+                // Remover objetos que saíram da tela
+                if (obj.y > canvas.height + 50) {
+                    if (obj.type !== 'bad') {
+                        gameState.lives--;
+                        livesDisplay.textContent = gameState.lives;
+                    }
+                    fallingObjects.splice(index, 1);
+                }
+            });
+
+            // Atualizar partículas
+            particles.forEach((particle, index) => {
+                particle.y += particle.speed;
+                particle.life--;
+                if (particle.life <= 0) {
+                    particles.splice(index, 1);
+                }
+            });
+
+            // Verificar condições de fim de jogo
+            checkGameOver();
+        }
+
+        function draw() {
+            // Fundo
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#E3F2FD');
+            gradient.addColorStop(1, '#BBDEFB');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Desenhar objetos caindo
+            fallingObjects.forEach(obj => {
+                ctx.fillStyle = obj.color;
+                ctx.beginPath();
+                
+                if (obj.type === 'bonus') {
+                    // Estrela
+                    drawStar(ctx, obj.x + obj.size/2, obj.y + obj.size/2, 5, obj.size/2, obj.size/4);
+                } else {
+                    // Círculo normal
+                    ctx.arc(obj.x + obj.size/2, obj.y + obj.size/2, obj.size/2, 0, Math.PI * 2);
+                }
+                
+                ctx.fill();
+                
+                // Contorno
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            });
+
+            // Desenhar cesta
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(basket.x, basket.y, basket.width, basket.height);
+            ctx.fillStyle = '#A0522D';
+            ctx.fillRect(basket.x, basket.y, basket.width, 10);
+
+            // Desenhar partículas
+            particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.globalAlpha = particle.life / 30;
+                ctx.beginPath();
+                ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1;
+
+            // Instruções quando não está jogando
+            if (!gameState.isPlaying && fallingObjects.length === 0) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 24px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('🎯 Toque e arraste para mover a cesta!', canvas.width/2, canvas.height/2);
+                ctx.font = '18px Arial';
+                ctx.fillText('🍎 Verde: +1 ponto | 🔵 Azul: +2 pontos', canvas.width/2, canvas.height/2 + 40);
+                ctx.fillText('💣 Vermelho: -1 vida | ⭐ Dourado: +5 pontos', canvas.width/2, canvas.height/2 + 70);
+            }
+        }
+
+        function drawStar(ctx, cx, cy, spikes, outerRadius, innerRadius) {
+            let rot = Math.PI / 2 * 3;
+            let x = cx;
+            let y = cy;
+            let step = Math.PI / spikes;
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - outerRadius);
+            
+            for (let i = 0; i < spikes; i++) {
+                x = cx + Math.cos(rot) * outerRadius;
+                y = cy + Math.sin(rot) * outerRadius;
+                ctx.lineTo(x, y);
+                rot += step;
+
+                x = cx + Math.cos(rot) * innerRadius;
+                y = cy + Math.sin(rot) * innerRadius;
+                ctx.lineTo(x, y);
+                rot += step;
+            }
+            
+            ctx.lineTo(cx, cy - outerRadius);
+            ctx.closePath();
+        }
+
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 10; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 5 + 2,
+                    color: color,
+                    speed: Math.random() * 3 - 1.5,
+                    life: 30
+                });
+            }
+        }
+
+        function updateProgressBar() {
+            const progress = (gameState.score / 20) * 100;
+            progressBar.style.width = Math.min(progress, 100) + '%';
+        }
+
+        function checkGameOver() {
+            if (gameState.time <= 0 || gameState.lives <= 0 || gameState.score >= 20) {
+                endGame();
+            }
+        }
+
+        function endGame() {
+            gameState.isPlaying = false;
+            cancelAnimationFrame(gameState.gameLoop);
+            
+            if (gameState.score >= 20) {
+                messageTitle.textContent = '🎉 Você Venceu!';
+                messageTitle.style.color = '#4CAF50';
+                messageText.textContent = `Parabéns! Você fez ${gameState.score} pontos!`;
+            } else if (gameState.lives <= 0) {
+                messageTitle.textContent = '💔 Game Over';
+                messageTitle.style.color = '#F44336';
+                messageText.textContent = 'Suas vidas acabaram! Tente novamente.';
+            } else {
+                messageTitle.textContent = '⏰ Tempo Esgotado!';
+                messageTitle.style.color = '#FF9800';
+                messageText.textContent = `Você fez ${gameState.score} pontos!`;
+            }
+            
+            message.style.display = 'block';
+        }
+
+        function startGame() {
+            gameState = {
+                score: 0,
+                time: 30,
+                lives: 3,
+                isPlaying: true
+            };
+            
+            fallingObjects = [];
+            particles = [];
+            
+            scoreDisplay.textContent = '0';
+            timeDisplay.textContent = '30';
+            livesDisplay.textContent = '3';
+            progressBar.style.width = '0%';
+            message.style.display = 'none';
+            
+            gameState.gameLoop = requestAnimationFrame(gameLoop);
+        }
+
+        function resetGame() {
+            startGame();
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            if (gameState.isPlaying) {
+                gameState.gameLoop = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Controles de toque para mover a cesta
+        let isDragging = false;
+        
+        canvas.addEventListener('touchstart', function(event) {
+            event.preventDefault();
+            isDragging = true;
+            moveBasket(event.touches[0]);
+        });
+
+        canvas.addEventListener('touchmove', function(event) {
+            event.preventDefault();
+            if (isDragging) {
+                moveBasket(event.touches[0]);
+            }
+        });
+
+        canvas.addEventListener('touchend', function() {
+            isDragging = false;
+        });
+
+        // Também funciona com mouse
+        canvas.addEventListener('mousedown', function(event) {
+            isDragging = true;
+            moveBasket(event);
+        });
+
+        canvas.addEventListener('mousemove', function(event) {
+            if (isDragging) {
+                moveBasket(event);
+            }
+        });
+
+        canvas.addEventListener('mouseup', function() {
+            isDragging = false;
+        });
+
+        function moveBasket(input) {
+            const rect = canvas.getBoundingClientRect();
+            const x = input.clientX - rect.left;
+            
+            basket.x = x - basket.width / 2;
+            
+            // Manter dentro dos limites
+            basket.x = Math.max(0, Math.min(canvas.width - basket.width, basket.x));
+        }
+
+        // Iniciar automaticamente após 2 segundos
+        setTimeout(() => {
+            if (!gameState.isPlaying) {
+                startGame();
+            }
+        }, 2000);
+
+        // Loop inicial do jogo
+        gameLoop();
+    </script>
+</body>
+</html>

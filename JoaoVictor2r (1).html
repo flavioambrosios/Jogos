@@ -1,0 +1,179 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Galaxy Defender</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: black;
+  }
+  canvas {
+    display: block;
+    margin: auto;
+    background: radial-gradient(circle at center, #000022 0%, #000000 100%);
+    touch-action: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="400" height="600"></canvas>
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let player = {x: 180, y: 520, w: 40, h: 40, speed: 6};
+let bullets = [];
+let enemies = [];
+let score = 0;
+let gameOver = false;
+let touchX = null;
+
+// cria inimigos
+for (let i = 0; i < 5; i++) {
+  enemies.push({
+    x: Math.random() * 360,
+    y: Math.random() * 200,
+    w: 40,
+    h: 40,
+    vy: 2 + Math.random() * 2
+  });
+}
+
+// desenha jogador
+function drawPlayer() {
+  ctx.fillStyle = "cyan";
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+}
+
+// desenha tiros
+function drawBullets() {
+  ctx.fillStyle = "yellow";
+  bullets.forEach(b => ctx.fillRect(b.x, b.y, 4, 10));
+}
+
+// desenha inimigos
+function drawEnemies() {
+  ctx.fillStyle = "red";
+  enemies.forEach(e => ctx.fillRect(e.x, e.y, e.w, e.h));
+}
+
+function movePlayer() {
+  if (touchX !== null) {
+    player.x += (touchX - (player.x + player.w / 2)) * 0.2;
+  }
+  if (player.x < 0) player.x = 0;
+  if (player.x + player.w > 400) player.x = 360;
+}
+
+function updateBullets() {
+  bullets.forEach(b => b.y -= 8);
+  bullets = bullets.filter(b => b.y > 0);
+}
+
+function updateEnemies() {
+  enemies.forEach(e => e.y += e.vy);
+  enemies.forEach(e => {
+    if (e.y > 600) {
+      e.y = -40;
+      e.x = Math.random() * 360;
+    }
+  });
+}
+
+function checkCollisions() {
+  enemies.forEach((e, ei) => {
+    bullets.forEach((b, bi) => {
+      if (b.x < e.x + e.w && b.x + 4 > e.x && b.y < e.y + e.h && b.y + 10 > e.y) {
+        // inimigo destruído
+        enemies.splice(ei, 1);
+        bullets.splice(bi, 1);
+        score++;
+        enemies.push({
+          x: Math.random() * 360,
+          y: -40,
+          w: 40,
+          h: 40,
+          vy: 2 + Math.random() * 2
+        });
+      }
+    });
+    // colisão jogador-inimigo
+    if (
+      player.x < e.x + e.w &&
+      player.x + player.w > e.x &&
+      player.y < e.y + e.h &&
+      player.y + player.h > e.y
+    ) {
+      gameOver = true;
+    }
+  });
+}
+
+function drawScore() {
+  ctx.fillStyle = "white";
+  ctx.font = "18px Arial";
+  ctx.fillText("Pontos: " + score, 10, 25);
+}
+
+function drawGameOver() {
+  ctx.fillStyle = "red";
+  ctx.font = "40px Arial";
+  ctx.fillText("GAME OVER", 90, 280);
+  ctx.font = "20px Arial";
+  ctx.fillText("Toque para reiniciar", 110, 310);
+}
+
+function gameLoop() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!gameOver) {
+    movePlayer();
+    updateBullets();
+    updateEnemies();
+    checkCollisions();
+    drawPlayer();
+    drawBullets();
+    drawEnemies();
+    drawScore();
+  } else {
+    drawGameOver();
+  }
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+
+// controles de toque
+canvas.addEventListener("touchstart", e => {
+  const t = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  touchX = t.clientX - rect.left;
+  // atira
+  if (!gameOver) {
+    bullets.push({x: player.x + player.w/2 - 2, y: player.y});
+  } else {
+    // reinicia
+    score = 0;
+    enemies = [];
+    for (let i = 0; i < 5; i++) {
+      enemies.push({
+        x: Math.random() * 360,
+        y: Math.random() * 200,
+        w: 40,
+        h: 40,
+        vy: 2 + Math.random() * 2
+      });
+    }
+    gameOver = false;
+  }
+});
+
+canvas.addEventListener("touchmove", e => {
+  const t = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  touchX = t.clientX - rect.left;
+});
+</script>
+</body>
+</html>
